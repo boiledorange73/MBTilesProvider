@@ -3,7 +3,7 @@ package com.gmail.boiledorange73.and4.ut.app;
 import java.io.File;
 import java.util.ResourceBundle;
 
-import com.gmail.boiledorange73.and4.ut.dl.DownloaderServiceBase;
+import com.gmail.boiledorange73.and4.ut.dl.DownloaderService;
 import com.gmail.boiledorange73.ut.FileUtil;
 
 import android.app.AlertDialog;
@@ -63,26 +63,26 @@ public abstract class DownloaderActivityBase extends ActivityBase {
     private TextView mTxtMessage;
 
     private void onDownloaderStatusChanged(Context context, Intent intent) {
-        int status = intent.getIntExtra(DownloaderServiceBase.XKEY_STATUS,
-                DownloaderServiceBase.ST_NONE);
-        if (status == DownloaderServiceBase.ST_ERROR) {
+        int status = intent.getIntExtra(DownloaderService.XKEY_STATUS,
+                DownloaderService.ST_NONE);
+        if (status == DownloaderService.ST_ERROR) {
             this.mNowDownloading = false;
             this.mTxtMessage.setText(intent
-                    .getStringExtra(DownloaderServiceBase.XKEY_MESSAGE));
+                    .getStringExtra(DownloaderService.XKEY_MESSAGE));
             this.changeStatus();
         } else {
-            if (status == DownloaderServiceBase.ST_FINISHED) {
+            if (status == DownloaderService.ST_FINISHED) {
                 this.mNowDownloading = false;
                 this.changeStatus();
-            } else if (status == DownloaderServiceBase.ST_CANCEL) {
+            } else if (status == DownloaderService.ST_CANCEL) {
                 this.mNowDownloading = false;
                 this.changeStatus();
-            } else if (status == DownloaderServiceBase.ST_DOWNLOADING) {
+            } else if (status == DownloaderService.ST_DOWNLOADING) {
                 this.mNowDownloading = true;
                 this.mFileSizeValue = intent.getLongExtra(
-                        DownloaderServiceBase.XKEY_FILESIZE, -1L);
+                        DownloaderService.XKEY_FILESIZE, -1L);
                 this.mProgressValue = intent.getLongExtra(
-                        DownloaderServiceBase.XKEY_PROGRESS, -1L);
+                        DownloaderService.XKEY_PROGRESS, -1L);
                 if (this.mFileSizeValue >= 0) {
                     this.mProgressPercentValue = (int) (((double) this.mProgressValue * 100.0) / (double) this.mFileSizeValue);
                     this.changeStatus();
@@ -133,7 +133,7 @@ public abstract class DownloaderActivityBase extends ActivityBase {
 
         this.mReceiver = new DownloaderActivityBase.DownloaderServiceReceiver();
         IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(DownloaderServiceBase.BROADCAST_ACTION);
+        intentFilter.addAction(DownloaderService.BROADCAST_ACTION);
         this.registerReceiver(this.mReceiver, intentFilter);
     }
 
@@ -167,10 +167,8 @@ public abstract class DownloaderActivityBase extends ActivityBase {
 
     protected abstract DataFileStatusEnum checkDataFileStatus(File localFile);
 
-    protected abstract Class<? extends Service> getDownloaderServiceClass();
-
     protected abstract boolean isAutoStart();
-    
+
     protected abstract boolean isAppInhibitable();
 
     /**
@@ -217,6 +215,17 @@ public abstract class DownloaderActivityBase extends ActivityBase {
         return local;
     }
 
+    /**
+     * Returns used service class. If you want to use the service excepting
+     * {@link com.gmail.boiledorange73.and4.ut.dl.DownloaderServie}, override
+     * this.
+     * 
+     * @return
+     */
+    protected Class<? extends Service> getDownloaderServiceClass() {
+        return DownloaderService.class;
+    }
+
     // --------
     // Handles when one of buttons is clicked.
     //
@@ -240,10 +249,13 @@ public abstract class DownloaderActivityBase extends ActivityBase {
         }
 
         this.mServiceIntent = new Intent(this, this.getDownloaderServiceClass());
-        this.mServiceIntent.putExtra(DownloaderServiceBase.XKEY_TITLE, title);
-        this.mServiceIntent.putExtra(DownloaderServiceBase.XKEY_REMOTE,
+        this.mServiceIntent.putExtra(DownloaderService.XKEY_TITLE, title);
+        this.mServiceIntent.putExtra(DownloaderService.XKEY_REMOTE,
                 remoteUrl);
-        this.mServiceIntent.putExtra(DownloaderServiceBase.XKEY_LOCAL, local);
+        this.mServiceIntent.putExtra(DownloaderService.XKEY_LOCAL, local);
+        this.mServiceIntent.putExtra(
+                DownloaderService.XKEY_CALLBACK_ACTIVITY_CLASS,
+                this.getClass());
         this.startService(this.mServiceIntent);
     }
 

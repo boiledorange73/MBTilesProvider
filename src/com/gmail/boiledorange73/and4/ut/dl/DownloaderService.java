@@ -29,6 +29,7 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.net.Uri;
+import android.os.Bundle;
 
 //
 // ダウンロード開始 - ヘッダから取ったサイズ(負数の場合は不定), 現在まででサイズ(レジーム時に)(0以上)
@@ -37,7 +38,7 @@ import android.net.Uri;
 // ダウンロード中止 - エラーメッセージ
 //
 
-public abstract class DownloaderServiceBase extends IntentService {
+public class DownloaderService extends IntentService {
 
     public static final int ST_NONE = -1;
     public static final int ST_DOWNLOADING = 1;
@@ -48,6 +49,9 @@ public abstract class DownloaderServiceBase extends IntentService {
     public static final String XKEY_REMOTE = "remote";
     public static final String XKEY_LOCAL = "local";
     public static final String XKEY_TITLE = "title";
+    public static final String XKEY_CALLBACK_ACTIVITY_CLASS = "callback_activity_class";
+    public static final String XKEY_HTTP_TIMEOUT_MS = "http_timeout_ms";
+    public static final String XKEY_SOCKET_TIMEOUT_MS = "socket_timeout_ms";
 
     public static final String XKEY_STATUS = "status";
     public static final String XKEY_FILESIZE = "filesize";
@@ -61,6 +65,8 @@ public abstract class DownloaderServiceBase extends IntentService {
 
     private static final int DEFAULT_ID_NOTIFICATION = 1;
     private static final int BUFFERSIZE = 1024 * 1024 * 4;
+    private static final int DEFAULT_SOCKET_TIMEOUT_MS = 10000;
+    private static final int DEFAULT_HTTP_TIMEOUT_MS = 10000;
 
     private long mContentLength = -1;
     private long mProgress = -1;
@@ -77,7 +83,7 @@ public abstract class DownloaderServiceBase extends IntentService {
      * @param name
      *            Used to name the worker thread, important only for debugging.
      */
-    public DownloaderServiceBase(String name) {
+    public DownloaderService(String name) {
         super(name);
         // Java resource
         this.mResourceBundle = ResourceBundle
@@ -87,7 +93,7 @@ public abstract class DownloaderServiceBase extends IntentService {
     /**
      * Default constructor. Thread name must be "DownloaderService".
      */
-    public DownloaderServiceBase() {
+    public DownloaderService() {
         this("DownloaderService");
     }
 
@@ -100,7 +106,7 @@ public abstract class DownloaderServiceBase extends IntentService {
      * @return Notification id.
      */
     public int getNotificationId() {
-        return DownloaderServiceBase.DEFAULT_ID_NOTIFICATION;
+        return DownloaderService.DEFAULT_ID_NOTIFICATION;
     }
 
     /**
@@ -123,8 +129,8 @@ public abstract class DownloaderServiceBase extends IntentService {
                 return userAgentName;
             }
         } else {
-            return DownloaderServiceBase.DEFAULT_USERAGENT_NAME + "/"
-                    + DownloaderServiceBase.DEFAULT_USERAGENT_VERSION;
+            return DownloaderService.DEFAULT_USERAGENT_NAME + "/"
+                    + DownloaderService.DEFAULT_USERAGENT_VERSION;
         }
     }
 
@@ -151,10 +157,19 @@ public abstract class DownloaderServiceBase extends IntentService {
     @Override
     protected void onHandleIntent(Intent intent) {
         String remote = intent
-                .getStringExtra(DownloaderServiceBase.XKEY_REMOTE);
-        String local = intent.getStringExtra(DownloaderServiceBase.XKEY_LOCAL);
-        String title = intent.getStringExtra(DownloaderServiceBase.XKEY_TITLE);
-        this.doDownload(this.getUserAgent(), title, remote, local, 2000);
+                .getStringExtra(DownloaderService.XKEY_REMOTE);
+        String local = intent.getStringExtra(DownloaderService.XKEY_LOCAL);
+        String title = intent.getStringExtra(DownloaderService.XKEY_TITLE);
+        int http_timeout_ms = intent.getIntExtra(
+                DownloaderService.XKEY_SOCKET_TIMEOUT_MS,
+                DownloaderService.DEFAULT_SOCKET_TIMEOUT_MS);
+        int socket_timeout_ms = intent.getIntExtra(
+                DownloaderService.XKEY_SOCKET_TIMEOUT_MS,
+                DownloaderService.DEFAULT_HTTP_TIMEOUT_MS);
+        Class<? extends Activity> callbackActivityClass = this
+                .calculateCallbackActivityClass(intent);
+        this.doDownload(this.getUserAgent(), title, remote, local,
+                callbackActivityClass, http_timeout_ms, socket_timeout_ms);
     }
 
     // ----------------
@@ -172,18 +187,20 @@ public abstract class DownloaderServiceBase extends IntentService {
      *            Title of data file.
      * @param text
      *            The message.
+     * @param callbackActivityClass
+     *            Activity which is activated when notification cell is tapped.
      */
     private void showNotifycation(int notification_id, int icon_id,
-            String title, String text) {
+            String title, String text,
+            Class<? extends Activity> callbackActivityClass) {
         Notification notification = new Notification(icon_id, text,
                 System.currentTimeMillis());
-        Class<? extends Activity> activityClass = this.getActivityClass();
         PendingIntent contentIntent = null;
-        if (activityClass != null) {
+        if (callbackActivityClass != null) {
             // The PendingIntent to launch our activity if the user selects this
             // notification
             contentIntent = PendingIntent.getActivity(this, 0, new Intent(this,
-                    activityClass), 0);
+                    callbackActivityClass), 0);
         }
         notification.setLatestEventInfo(this, title, text, contentIntent);
         ((NotificationManager) this
@@ -196,22 +213,26 @@ public abstract class DownloaderServiceBase extends IntentService {
      * 
      * @param title
      *            Title of data file.
+     * @param callbackActivityClass
+     *            Activity which is activated when notification cell is tapped.
      */
-    private void showCancel(String title) {
+    private void showCancel(String title,
+            Class<? extends Activity> callbackActivityClass) {
         String text = title
                 + " "
                 + this.mResourceBundle
                         .getString("DownloaderServiceBase.S_CANCELED");
         this.showNotifycation(this.getNotificationId(),
                 android.R.drawable.stat_notify_error, this.mResourceBundle
-                        .getString("DownloaderServiceBase.W_CANCEL"), text);
+                        .getString("DownloaderServiceBase.W_CANCEL"), text,
+                callbackActivityClass);
         Intent intent = new Intent();
-        intent.setAction(DownloaderServiceBase.BROADCAST_ACTION);
-        intent.putExtra(DownloaderServiceBase.XKEY_STATUS,
-                DownloaderServiceBase.ST_CANCEL);
-        intent.putExtra(DownloaderServiceBase.XKEY_FILESIZE,
+        intent.setAction(DownloaderService.BROADCAST_ACTION);
+        intent.putExtra(DownloaderService.XKEY_STATUS,
+                DownloaderService.ST_CANCEL);
+        intent.putExtra(DownloaderService.XKEY_FILESIZE,
                 this.mContentLength);
-        intent.putExtra(DownloaderServiceBase.XKEY_PROGRESS, this.mProgress);
+        intent.putExtra(DownloaderService.XKEY_PROGRESS, this.mProgress);
         this.sendBroadcast(intent);
     }
 
@@ -220,18 +241,21 @@ public abstract class DownloaderServiceBase extends IntentService {
      * 
      * @param text
      *            Error message.
+     * @param callbackActivityClass
+     *            Activity which is activated when notification cell is tapped.
      */
-    private void showError(String text) {
+    private void showError(String text,
+            Class<? extends Activity> callbackActivityClass) {
         this.showNotifycation(
                 this.getNotificationId(),
                 android.R.drawable.stat_notify_error,
                 this.mResourceBundle.getString("DownloaderServiceBase.W_ERROR"),
-                text);
+                text, callbackActivityClass);
         Intent intent = new Intent();
-        intent.setAction(DownloaderServiceBase.BROADCAST_ACTION);
-        intent.putExtra(DownloaderServiceBase.XKEY_STATUS,
-                DownloaderServiceBase.ST_ERROR);
-        intent.putExtra(DownloaderServiceBase.XKEY_MESSAGE, text);
+        intent.setAction(DownloaderService.BROADCAST_ACTION);
+        intent.putExtra(DownloaderService.XKEY_STATUS,
+                DownloaderService.ST_ERROR);
+        intent.putExtra(DownloaderService.XKEY_MESSAGE, text);
         this.sendBroadcast(intent);
     }
 
@@ -247,8 +271,11 @@ public abstract class DownloaderServiceBase extends IntentService {
      *            A part of reason.
      * @param reason2
      *            A part of reason.
+     * @param callbackActivityClass
+     *            Activity which is activated when notification cell is tapped.
      */
-    private void showDownloadError(String title, String reason1, String reason2) {
+    private void showDownloadError(String title, String reason1,
+            String reason2, Class<? extends Activity> callbackActivityClass) {
         String mess = title
                 + " "
                 + this.mResourceBundle
@@ -267,7 +294,7 @@ public abstract class DownloaderServiceBase extends IntentService {
         if (reason != null) {
             mess = mess + " (" + reason + ")";
         }
-        this.showError(mess);
+        this.showError(mess, callbackActivityClass);
     }
 
     /**
@@ -275,8 +302,11 @@ public abstract class DownloaderServiceBase extends IntentService {
      * 
      * @param title
      *            Title of data file.
+     * @param callbackActivityClass
+     *            Activity which is activated when notification cell is tapped.
      */
-    private void showDownloading(String title) {
+    private void showDownloading(String title,
+            Class<? extends Activity> callbackActivityClass) {
         String text = title;
         if (this.mContentLength > 0) {
             int percent = (int) ((double) this.mProgress * 100.0 / (double) this.mContentLength);
@@ -284,14 +314,15 @@ public abstract class DownloaderServiceBase extends IntentService {
         }
         this.showNotifycation(this.getNotificationId(),
                 android.R.drawable.stat_sys_download, this.mResourceBundle
-                        .getString("DownloaderServiceBase.W_DOWNLOADING"), text);
+                        .getString("DownloaderServiceBase.W_DOWNLOADING"),
+                text, callbackActivityClass);
         Intent intent = new Intent();
-        intent.setAction(DownloaderServiceBase.BROADCAST_ACTION);
-        intent.putExtra(DownloaderServiceBase.XKEY_STATUS,
-                DownloaderServiceBase.ST_DOWNLOADING);
-        intent.putExtra(DownloaderServiceBase.XKEY_FILESIZE,
+        intent.setAction(DownloaderService.BROADCAST_ACTION);
+        intent.putExtra(DownloaderService.XKEY_STATUS,
+                DownloaderService.ST_DOWNLOADING);
+        intent.putExtra(DownloaderService.XKEY_FILESIZE,
                 this.mContentLength);
-        intent.putExtra(DownloaderServiceBase.XKEY_PROGRESS, this.mProgress);
+        intent.putExtra(DownloaderService.XKEY_PROGRESS, this.mProgress);
         this.sendBroadcast(intent);
     }
 
@@ -300,8 +331,11 @@ public abstract class DownloaderServiceBase extends IntentService {
      * 
      * @param fileName
      *            file name text, not full-path.
+     * @param callbackActivityClass
+     *            Activity which is activated when notification cell is tapped.
      */
-    private void showFinished(String fileName) {
+    private void showFinished(String fileName,
+            Class<? extends Activity> callbackActivityClass) {
         String text = fileName
                 + " "
                 + this.mResourceBundle
@@ -311,13 +345,13 @@ public abstract class DownloaderServiceBase extends IntentService {
                 android.R.drawable.stat_sys_download_done,
                 this.mResourceBundle
                         .getString("DownloaderServiceBase.W_DOWNLOAD_FINISHED"),
-                text);
+                text, callbackActivityClass);
         Intent intent = new Intent();
-        intent.setAction(DownloaderServiceBase.BROADCAST_ACTION);
-        intent.putExtra(DownloaderServiceBase.XKEY_STATUS,
-                DownloaderServiceBase.ST_FINISHED);
-        intent.putExtra(DownloaderServiceBase.XKEY_FILESIZE, this.mProgress);
-        intent.putExtra(DownloaderServiceBase.XKEY_PROGRESS, this.mProgress);
+        intent.setAction(DownloaderService.BROADCAST_ACTION);
+        intent.putExtra(DownloaderService.XKEY_STATUS,
+                DownloaderService.ST_FINISHED);
+        intent.putExtra(DownloaderService.XKEY_FILESIZE, this.mProgress);
+        intent.putExtra(DownloaderService.XKEY_PROGRESS, this.mProgress);
         this.sendBroadcast(intent);
     }
 
@@ -335,12 +369,18 @@ public abstract class DownloaderServiceBase extends IntentService {
      *            Remote URI text.
      * @param local
      *            Local file path.
-     * @param timeout_ms
+     * @param callbackActivityClass
+     *            Activity which is activated when notification cell is tapped.
+     * @param connection_timeout_ms
      *            Connection timeout milliseconds. If this is negative,
      *            connection timeout is not set.
+     * @param socket_timeout_ms
+     *            Timeout milliseconds between data arrivals.
      */
     private void doDownload(String userAgent, String title,
-            String remoteUriText, String local, int timeout_ms) {
+            String remoteUriText, String local,
+            Class<? extends Activity> callbackActivityClass,
+            int connection_timeout_ms, int socket_timeout_ms) {
         // init
         this.mWorking = true;
         this.mContentLength = -1;
@@ -367,10 +407,10 @@ public abstract class DownloaderServiceBase extends IntentService {
             this.mProgress = 0;
         }
         // notification
-        this.showDownloading(title);
+        this.showDownloading(title, callbackActivityClass);
         // checkpoint
         if (this.mWorking == false) {
-            this.showCancel(title);
+            this.showCancel(title, callbackActivityClass);
             return;
         }
         // -------- HTTP
@@ -382,11 +422,13 @@ public abstract class DownloaderServiceBase extends IntentService {
             sentParams.setParameter("http.useragent", userAgent);
         }
         // client / set timeout (ms)
-        if (timeout_ms > 0) {
+        if (connection_timeout_ms > 0) {
             client.getParams().setParameter("http.connection.timeout",
-                    Integer.valueOf(timeout_ms));
+                    Integer.valueOf(connection_timeout_ms));
+        }
+        if (socket_timeout_ms > 0) {
             client.getParams().setParameter("http.socket.timeout",
-                    Integer.valueOf(timeout_ms));
+                    Integer.valueOf(socket_timeout_ms));
         }
 
         // Gets only head
@@ -424,19 +466,19 @@ public abstract class DownloaderServiceBase extends IntentService {
 
         // finished?
         if (this.mContentLength > 0 && this.mProgress >= this.mContentLength) {
-            this.showFinished(title);
+            this.showFinished(title, callbackActivityClass);
             return;
         }
 
         // checkpoint
         if (this.mWorking == false) {
-            this.showCancel(title);
+            this.showCancel(title, callbackActivityClass);
             return;
         }
 
         // gets content.
         // notification
-        this.showDownloading(title);
+        this.showDownloading(title, callbackActivityClass);
         // open connection
         HttpUriRequest contentReq = new HttpGet(remoteUriText);
         if (this.mProgress > 0) {
@@ -447,22 +489,23 @@ public abstract class DownloaderServiceBase extends IntentService {
         try {
             contentRes = client.execute(contentReq);
         } catch (ClientProtocolException e) {
-            this.showError(e.getMessage());
+            this.showError(e.getMessage(), callbackActivityClass);
             e.printStackTrace();
             return;
         } catch (IOException e) {
-            this.showError(e.getMessage());
+            this.showError(e.getMessage(), callbackActivityClass);
             e.printStackTrace();
             return;
         }
         if (contentRes == null) {
-            this.showDownloadError(title, null, null);
+            this.showDownloadError(title, null, null, callbackActivityClass);
         }
         // check status. 200 - success, 206 - partial
         int statusCode = contentRes.getStatusLine().getStatusCode();
         if (statusCode != 200 && statusCode != 206) {
             this.showDownloadError(title, statusCode + " "
-                    + contentRes.getStatusLine().getReasonPhrase(), null);
+                    + contentRes.getStatusLine().getReasonPhrase(), null,
+                    callbackActivityClass);
             return;
         }
         // gets input stream.
@@ -470,16 +513,18 @@ public abstract class DownloaderServiceBase extends IntentService {
         try {
             is = contentRes.getEntity().getContent();
         } catch (IllegalStateException e) {
-            this.showDownloadError(title, e.getMessage(), null);
+            this.showDownloadError(title, e.getMessage(), null,
+                    callbackActivityClass);
             e.printStackTrace();
             return;
         } catch (IOException e) {
-            this.showDownloadError(title, e.getMessage(), null);
+            this.showDownloadError(title, e.getMessage(), null,
+                    callbackActivityClass);
             e.printStackTrace();
             return;
         }
         // sets up buffer
-        byte[] buff = new byte[DownloaderServiceBase.BUFFERSIZE];
+        byte[] buff = new byte[DownloaderService.BUFFERSIZE];
         // gets output stream.
         FileOutputStream os = null;
         try {
@@ -487,34 +532,38 @@ public abstract class DownloaderServiceBase extends IntentService {
             int read;
             // checkpoint
             if (this.mWorking == false) {
-                this.showCancel(title);
+                this.showCancel(title, callbackActivityClass);
                 return;
             }
             // reading loop
-            while ((read = is.read(buff, 0, DownloaderServiceBase.BUFFERSIZE)) >= 0) {
+            while ((read = is.read(buff, 0, DownloaderService.BUFFERSIZE)) >= 0) {
                 // checkpoint
                 if (this.mWorking == false) {
-                    this.showCancel(title);
+                    this.showCancel(title, callbackActivityClass);
                     return;
                 }
                 if (read > 0) {
                     os.write(buff, 0, read);
                     this.mProgress += read;
                     // notification
-                    this.showDownloading(title);
+                    this.showDownloading(title, callbackActivityClass);
                 }
             }
-            this.showFinished(title);
+            this.showFinished(title, callbackActivityClass);
         } catch (FileNotFoundException e) {
-            this.showDownloadError(title, e.getMessage(), null);
+            this.showDownloadError(title, e.getMessage(), null,
+                    callbackActivityClass);
             e.printStackTrace();
             return;
         } catch (SocketTimeoutException e) {
-            this.showDownloadError(title, "接続待機時間切れ", e.getMessage());
+            this.showDownloadError(title, this.mResourceBundle
+                    .getString("DownloaderServieBase.S_CONNECTION_DOWN"), e
+                    .getMessage(), callbackActivityClass);
             e.printStackTrace();
             return;
         } catch (IOException e) {
-            this.showDownloadError(title, e.getMessage(), null);
+            this.showDownloadError(title, e.getMessage(), null,
+                    callbackActivityClass);
             e.printStackTrace();
             return;
         } finally {
@@ -537,13 +586,36 @@ public abstract class DownloaderServiceBase extends IntentService {
     }
 
     // ----------------
-    // Abstract methods
-    // ----------------
     /**
-     * Gets the class of activity which called when notification cell is tapped.
+     * Calculates callback activity class, with checks whether received instance
+     * if class of Activity.
      * 
-     * @return Activity class. NOT activity instance.
+     * @param intent
+     *            Intent.
+     * @return Class of Activity if received instance is suitable. Otherwise,
+     *         returns null.
      */
-    public abstract Class<? extends Activity> getActivityClass();
-
+    private Class<? extends Activity> calculateCallbackActivityClass(
+            Intent intent) {
+        if (intent == null) {
+            return null;
+        }
+        Bundle extras = intent.getExtras();
+        if (extras == null) {
+            return null;
+        }
+        if (!extras
+                .containsKey(DownloaderService.XKEY_CALLBACK_ACTIVITY_CLASS)) {
+            return null;
+        }
+        Object obj = intent
+                .getSerializableExtra(DownloaderService.XKEY_CALLBACK_ACTIVITY_CLASS);
+        if (obj == null) {
+            return null;
+        }
+        if (((Class<?>) obj).asSubclass(Activity.class) != null) {
+            return (Class<? extends Activity>) obj;
+        }
+        return null;
+    }
 }
