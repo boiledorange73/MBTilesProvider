@@ -14,6 +14,8 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Resources;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.DisplayMetrics;
@@ -159,16 +161,40 @@ public abstract class DownloaderActivityBase extends ActivityBase {
 
     private Intent mServiceIntent = null;
 
+    /** Gets title of the data. */
     protected abstract String getDataTitle();
 
+    /** Gets remote URL */
     protected abstract String getRemoteUrl();
 
-    protected abstract String getRelativePath();
+    /**
+     * Gets local filename. Returned value must not contain
+     * {@link java.io.File#separator}.
+     */
+    protected abstract String getLocalFileName();
 
+    /**
+     * Gets the direcory path, which is relative on
+     * {@link android.os.Environment#getExternalStorageDirectory()}.
+     */
+    protected abstract String getRelativeDirectoryPath();
+
+    /**
+     * Cheks whether current status of local file. If returns null, it means
+     * local file is fine.
+     */
     protected abstract DataFileStatusEnum checkDataFileStatus(File localFile);
 
+    /**
+     * Returns whether this activity starts the application if local file is
+     * fine.
+     */
     protected abstract boolean isAutoStart();
 
+    /**
+     * Whether currently application inhibitable. If returns true,
+     * "Start Application" button is disabled.
+     */
     protected abstract boolean isAppInhibitable();
 
     /**
@@ -187,13 +213,40 @@ public abstract class DownloaderActivityBase extends ActivityBase {
     /**
      * Calculates the directory where downloaded file is put on. If you want to
      * download the file on the directory different from
-     * {@link android.os.Environment#getExternalStorageDirectory()}, override
-     * this method.
+     * {@link android.os.Environment#getExternalStorageDirectory()}/
+     * {@link #getRelativeDirectoryPath()}, override this method.
      * 
      * @return The path text.
      */
     public File getLocalDirectory() {
-        return Environment.getExternalStorageDirectory();
+        String path = Environment.getExternalStorageDirectory()
+                .getAbsolutePath();
+        String relPath = this.getRelativeDirectoryPath();
+        if (relPath != null) {
+            path = path + File.separator + relPath;
+        }
+        return new File(path);
+    }
+
+    /**
+     * Calculates whether this device on suitable network. In this method,
+     * suitable network is only wi-fi.
+     * 
+     * If you want to download on other network without confirmation, override
+     * this.
+     * 
+     * @return Whether this device on suitable network.
+     */
+    public boolean isOnSuitableNetwork() {
+        ConnectivityManager mgr = (ConnectivityManager) this
+                .getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (mgr != null) {
+            NetworkInfo activeNetworkInfo = mgr.getActiveNetworkInfo();
+            if (activeNetworkInfo != null) {
+                return activeNetworkInfo.getType() == ConnectivityManager.TYPE_WIFI;
+            }
+        }
+        return true;
     }
 
     /**
@@ -202,15 +255,15 @@ public abstract class DownloaderActivityBase extends ActivityBase {
      * @return The path text.
      */
     public String getLocal() {
-        String relativePath = this.getRelativePath();
-        if (relativePath == null) {
+        String localFileName = this.getLocalFileName();
+        if (localFileName == null) {
             String remoteUrl = this.getRemoteUrl();
-            relativePath = FileUtil.calculateFileNameByUrl(remoteUrl);
+            localFileName = FileUtil.calculateFileNameByUrl(remoteUrl);
         }
-        if (relativePath == null) {
+        if (localFileName == null) {
             return null;
         }
-        String local = FileUtil.calculatePath(relativePath,
+        String local = FileUtil.calculatePath(localFileName,
                 this.getLocalDirectory());
         return local;
     }
@@ -229,6 +282,42 @@ public abstract class DownloaderActivityBase extends ActivityBase {
     // --------
     // Handles when one of buttons is clicked.
     //
+
+    /**
+     * Checks on suitable network. If suitable, continues. If not, shows dialog
+     * to confirm downloading.
+     */
+    private void onStartingDownload() {
+        if (this.isOnSuitableNetwork()) {
+            this.startDownload();
+        } else {
+            AlertDialog.Builder bld = new AlertDialog.Builder(this);
+            bld.setTitle(this.mResourceBundle
+                    .getString("DownloaderActivityBase.S_CONFIRMATION"));
+            bld.setIcon(android.R.drawable.ic_dialog_alert);
+            bld.setMessage(this.mResourceBundle
+                    .getString("DownloaderActivityBase.S_ON_UNSUITABLE_NETWORK")
+                    + "\n"
+                    + this.mResourceBundle
+                            .getString("DownloaderActivityBase.Q_CONTINUE_DOWNLOAD"));
+            bld.setPositiveButton(android.R.string.ok,
+                    new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            DownloaderActivityBase.this.getHandler().post(
+                                    new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            DownloaderActivityBase.this
+                                                    .startDownload();
+                                        }
+                                    });
+                        }
+                    });
+            bld.setNegativeButton(android.R.string.cancel, null);
+            bld.show();
+        }
+    }
 
     /**
      * Starts downloading.
@@ -250,12 +339,11 @@ public abstract class DownloaderActivityBase extends ActivityBase {
 
         this.mServiceIntent = new Intent(this, this.getDownloaderServiceClass());
         this.mServiceIntent.putExtra(DownloaderService.XKEY_TITLE, title);
-        this.mServiceIntent.putExtra(DownloaderService.XKEY_REMOTE,
-                remoteUrl);
+        this.mServiceIntent.putExtra(DownloaderService.XKEY_REMOTE, remoteUrl);
         this.mServiceIntent.putExtra(DownloaderService.XKEY_LOCAL, local);
-        this.mServiceIntent.putExtra(
-                DownloaderService.XKEY_CALLBACK_ACTIVITY_CLASS,
-                this.getClass());
+        this.mServiceIntent
+                .putExtra(DownloaderService.XKEY_CALLBACK_ACTIVITY_CLASS,
+                        this.getClass());
         this.startService(this.mServiceIntent);
     }
 
@@ -278,6 +366,7 @@ public abstract class DownloaderActivityBase extends ActivityBase {
             AlertDialog.Builder bld = new AlertDialog.Builder(this);
             bld.setTitle(this.mResourceBundle
                     .getString("DownloaderActivityBase.S_CONFIRMATION"));
+            bld.setIcon(android.R.drawable.ic_dialog_alert);
             bld.setMessage(this.mResourceBundle
                     .getString("DownloaderActivityBase.Q_DELETE_FILE"));
             bld.setPositiveButton(this.getText(android.R.string.ok),
@@ -524,7 +613,7 @@ public abstract class DownloaderActivityBase extends ActivityBase {
                 DownloaderActivityBase.this.getHandler().post(new Runnable() {
                     @Override
                     public void run() {
-                        DownloaderActivityBase.this.startDownload();
+                        DownloaderActivityBase.this.onStartingDownload();
                     }
                 });
             }
@@ -599,5 +688,4 @@ public abstract class DownloaderActivityBase extends ActivityBase {
         // init
         this.changeStatus();
     }
-
 }

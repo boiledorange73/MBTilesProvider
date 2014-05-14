@@ -31,13 +31,6 @@ import android.content.pm.PackageManager.NameNotFoundException;
 import android.net.Uri;
 import android.os.Bundle;
 
-//
-// ダウンロード開始 - ヘッダから取ったサイズ(負数の場合は不定), 現在まででサイズ(レジーム時に)(0以上)
-// ダウンロードプログレス - 現在までで取得したサイズ(0以上)
-// ダウンロード終了 - (データ無し)
-// ダウンロード中止 - エラーメッセージ
-//
-
 public class DownloaderService extends IntentService {
 
     public static final int ST_NONE = -1;
@@ -156,8 +149,7 @@ public class DownloaderService extends IntentService {
      */
     @Override
     protected void onHandleIntent(Intent intent) {
-        String remote = intent
-                .getStringExtra(DownloaderService.XKEY_REMOTE);
+        String remote = intent.getStringExtra(DownloaderService.XKEY_REMOTE);
         String local = intent.getStringExtra(DownloaderService.XKEY_LOCAL);
         String title = intent.getStringExtra(DownloaderService.XKEY_TITLE);
         int http_timeout_ms = intent.getIntExtra(
@@ -230,8 +222,7 @@ public class DownloaderService extends IntentService {
         intent.setAction(DownloaderService.BROADCAST_ACTION);
         intent.putExtra(DownloaderService.XKEY_STATUS,
                 DownloaderService.ST_CANCEL);
-        intent.putExtra(DownloaderService.XKEY_FILESIZE,
-                this.mContentLength);
+        intent.putExtra(DownloaderService.XKEY_FILESIZE, this.mContentLength);
         intent.putExtra(DownloaderService.XKEY_PROGRESS, this.mProgress);
         this.sendBroadcast(intent);
     }
@@ -320,8 +311,7 @@ public class DownloaderService extends IntentService {
         intent.setAction(DownloaderService.BROADCAST_ACTION);
         intent.putExtra(DownloaderService.XKEY_STATUS,
                 DownloaderService.ST_DOWNLOADING);
-        intent.putExtra(DownloaderService.XKEY_FILESIZE,
-                this.mContentLength);
+        intent.putExtra(DownloaderService.XKEY_FILESIZE, this.mContentLength);
         intent.putExtra(DownloaderService.XKEY_PROGRESS, this.mProgress);
         this.sendBroadcast(intent);
     }
@@ -397,7 +387,10 @@ public class DownloaderService extends IntentService {
                         .getString("DownloaderServiceBase.S_NONAME");
             }
         }
-
+        // creates directory
+        if (this.makeDir(local, callbackActivityClass) == false) {
+            return;
+        }
         // gets current file size.
         File localFile = new File(local);
         // Gets the progeress.
@@ -604,8 +597,7 @@ public class DownloaderService extends IntentService {
         if (extras == null) {
             return null;
         }
-        if (!extras
-                .containsKey(DownloaderService.XKEY_CALLBACK_ACTIVITY_CLASS)) {
+        if (!extras.containsKey(DownloaderService.XKEY_CALLBACK_ACTIVITY_CLASS)) {
             return null;
         }
         Object obj = intent
@@ -618,4 +610,45 @@ public class DownloaderService extends IntentService {
         }
         return null;
     }
+
+    private boolean makeDir(String filePath,
+            Class<? extends Activity> callbackActivityClass) {
+        if (filePath == null || !(filePath.length() > 0)) {
+            return true;
+        }
+        String curPath = "";
+        int ix;
+        while (filePath.length() > 0
+                && (ix = filePath.indexOf(File.separator)) >= 0) {
+            curPath = curPath + filePath.substring(0, ix);
+            filePath = filePath.substring(ix + File.separator.length());
+            if (curPath.length() > 0) {
+                File curFile = new File(curPath);
+                if (!curFile.isDirectory()) {
+                    // not directory / no such file or directory
+                    if (curFile.exists()) {
+                        // not directory
+                        String fmt = this.mResourceBundle
+                                .getString("DownloaderServieBase.F_1_IS_NOT_DIRECTORY");
+                        String mess = String.format(fmt, curPath);
+                        this.showError(mess, callbackActivityClass);
+                        return false;
+                    } else {
+                        // no such file or directory
+                        if (curFile.mkdir() == false) {
+                            // fails to create
+                            String fmt = this.mResourceBundle
+                                    .getString("DownloaderServieBase.F_FAIL_MKDIR_1");
+                            String mess = String.format(fmt, curPath);
+                            this.showError(mess, callbackActivityClass);
+                            return false;
+                        }
+                    }
+                }
+            }
+            curPath = curPath + File.separator;
+        }
+        return true;
+    }
+
 }
