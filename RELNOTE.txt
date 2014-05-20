@@ -1,3 +1,5 @@
+2014/05/20
+  * minzoom and maxzoom are added to acceptable metadata.
 2014/05/14
   * Added confirmation dialog if the device is NOT on Wi-Fi network.
   * In DownloaderActivityBase/MBTilesProvider,

@@ -43,6 +43,9 @@ import android.os.ParcelFileDescriptor;
  * 
  * Function name must match /^[\\$_a-zA-Z][\\$_0-9a-zA-Z]*$/
  * 
+ * Acceptable metadata are: name, type, version, description, format - mandatory
+ * bounds, attribution - optional minzoom, maxzoom - not in spec.
+ * 
  * @author yellow
  * 
  */
@@ -53,7 +56,8 @@ public class MBTilesProvider extends ContentProvider {
 
     /** White list for metadata name. */
     private static final String[] PERMISSIVE_METADATA_NAMES = { "name", "type",
-            "version", "description", "format", "bounds", "attribution" };
+            "version", "description", "format", "bounds", "attribution",
+            "minzoom", "maxzoom" };
 
     private HashMap<String, MBTilesOperator> mMBTiles = new HashMap<String, MBTilesOperator>();
     private TemporaryFileManager mTFM = null;
